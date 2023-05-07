@@ -7,27 +7,34 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity import EntityCategory
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
-from . import DOMAIN, EcoFlowEntity, HassioEcoFlowClient, select_bms
+from . import (DOMAIN, EcoFlowData, EcoFlowDevice, EcoFlowEntity,
+               EcoFlowExtraDevice, EcoFlowMainDevice)
 from .ecoflow import is_river, send
 
 _EFFECTS = ["Low", "High", "SOS"]
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_entities: AddEntitiesCallback):
-    client: HassioEcoFlowClient = hass.data[DOMAIN][entry.entry_id]
-    entities = []
+    data: EcoFlowData = hass.data[DOMAIN]
 
-    if is_river(client.product):
-        entities.extend([
-            LedEntity(client, client.pd, "light_state", "Light"),
-        ])
-        if client.product == 5:  # RIVER Max
-            entities.extend([
-                AmbientEntity(client, client.bms.pipe(
-                    select_bms(1)), "ambient", "Ambient light", 1),
-            ])
+    def device_added(device: EcoFlowDevice):
+        entities = []
+        if type(device) is EcoFlowMainDevice:
+            if is_river(device.product):
+                entities.extend([
+                    LedEntity(device, device.pd, "light_state", "Light"),
+                ])
+        elif type(device) is EcoFlowExtraDevice:
+            if device.product == 5:  # RIVER Max
+                entities.extend([
+                    AmbientEntity(device, device.bms,
+                                  "ambient", "Ambient light"),
+                ])
+        async_add_entities(entities)
 
-    async_add_entities(entities)
+    entry.async_on_unload(data.device_added.subscribe(device_added).dispose)
+    for device in data.devices.values():
+        device_added(device)
 
 
 class AmbientEntity(LightEntity, EcoFlowEntity):
@@ -39,7 +46,7 @@ class AmbientEntity(LightEntity, EcoFlowEntity):
     _last_mode = 1
 
     async def async_turn_off(self, **kwargs):
-        self._client.tcp.write(send.set_ambient(0))
+        self._device.send(send.set_ambient(0))
 
     async def async_turn_on(self, brightness=None, rgb_color=None, effect=None, **kwargs):
         if brightness is None:
@@ -58,7 +65,7 @@ class AmbientEntity(LightEntity, EcoFlowEntity):
         else:
             effect = self._attr_effect_list.index(effect)
 
-        self._client.tcp.write(send.set_ambient(
+        self._device.send(send.set_ambient(
             self._last_mode, effect, rgb_color, brightness))
 
     def _on_updated(self, data: dict[str, Any]):
@@ -91,10 +98,10 @@ class LedEntity(LightEntity, EcoFlowEntity):
             self._attr_effect = None
 
     async def async_turn_off(self, **kwargs):
-        self._client.tcp.write(send.set_light(self._client.product, 0))
+        self._device.send(send.set_light(self._device.product, 0))
 
     async def async_turn_on(self, effect: str = None, **kwargs):
         if not effect:
             effect = self.effect or _EFFECTS[0]
-        self._client.tcp.write(send.set_light(
-            self._client.product, _EFFECTS.index(effect) + 1))
+        self._device.send(send.set_light(
+            self._device.product, _EFFECTS.index(effect) + 1))

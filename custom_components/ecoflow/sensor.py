@@ -1,7 +1,8 @@
-from datetime import timedelta
-from typing import Any, Optional, Union
+from __future__ import annotations
 
-import reactivex.operators as ops
+from datetime import timedelta
+from typing import Any
+
 from homeassistant.components.sensor import (SensorDeviceClass, SensorEntity,
                                              SensorStateClass)
 from homeassistant.config_entries import ConfigEntry
@@ -15,161 +16,196 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.util.dt import utcnow
 from reactivex import Observable
 
-from . import DOMAIN, EcoFlowEntity, HassioEcoFlowClient, select_bms
-from .ecoflow import (is_delta, is_delta_mini, is_delta_pro, is_power_station,
-                      is_river)
+from . import (DOMAIN, EcoFlowData, EcoFlowDevice, EcoFlowEntity,
+               EcoFlowExtraDevice, EcoFlowMainDevice)
+from .ecoflow import is_delta, is_delta_mini, is_delta_pro, is_river, is_river_mini
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_entities: AddEntitiesCallback):
-    client: HassioEcoFlowClient = hass.data[DOMAIN][entry.entry_id]
-    entities = []
+    data: EcoFlowData = hass.data[DOMAIN]
 
-    if is_power_station(client.product):
-        entities.extend([
-            CurrentEntity(client, client.inverter,
-                          "ac_in_current", "AC input current"),
-            CurrentEntity(client, client.inverter,
-                          "ac_out_current", "AC output current"),
-            EnergyEntity(client, client.pd, "mppt_in_energy",
-                         "MPPT input energy"),
-            EnergySumEntity(client, "in_energy", [
-                            "ac", "car", "mppt"], "Total input energy"),
-            EnergySumEntity(client, "out_energy", [
-                            "ac", "car"], "Total output energy"),
-            FanEntity(client, client.inverter, "fan_state", "Fan"),
-            FrequencyEntity(client, client.inverter,
-                            "ac_in_freq", "AC input frequency"),
-            FrequencyEntity(client, client.inverter,
-                            "ac_out_freq", "AC output frequency"),
-            RemainEntity(client, client.pd, "remain_display", "Remain"),
-            LevelEntity(client, client.pd, "battery_level",
-                        "Battery"),
-            VoltageEntity(client, client.inverter,
-                          "ac_in_voltage", "AC input voltage"),
-            VoltageEntity(client, client.inverter,
-                          "ac_out_voltage", "AC output voltage"),
-            WattsEntity(client, client.pd, "in_power", "Total input"),
-            WattsEntity(client, client.pd, "out_power", "Total output"),
-            WattsEntity(client, client.inverter,
-                        "ac_consumption", "AC output + loss", real=True),
-            WattsEntity(client, client.inverter, "ac_out_power",
-                        "AC output", real=False),
-            WattsEntity(client, client.pd, "usb_out1_power",
-                        "USB-A left output"),
-            WattsEntity(client, client.pd, "usb_out2_power",
-                        "USB-A right output"),
-        ])
-        if is_delta(client.product):
-            bms = (
-                client.bms.pipe(select_bms(0), ops.share()),
-                client.bms.pipe(select_bms(1), ops.share()),
-                client.bms.pipe(select_bms(2), ops.share()),
-            )
+    def device_added(device: EcoFlowDevice):
+        entities = []
+        if type(device) is EcoFlowMainDevice:
             entities.extend([
-                CurrentEntity(client, client.mppt, "dc_in_current",
-                              "DC input current"),
-                CyclesEntity(
-                    client, bms[0], "battery_cycles", "Main battery cycles", 0),
-                RemainEntity(client, client.ems,
-                             "battery_remain_charge", "Remain charge"),
-                RemainEntity(client, client.ems,
-                             "battery_remain_discharge", "Remain discharge"),
-                SingleLevelEntity(
-                    client, bms[0], "battery_level_f32", "Main battery", 0),
-                TempEntity(client, client.inverter, "ac_out_temp",
-                           "AC temperature"),
-                TempEntity(client, bms[0], "battery_temp",
-                           "Main battery temperature", 0),
-                TempEntity(client, client.mppt, "dc_in_temp",
-                           "DC input temperature"),
-                TempEntity(client, client.mppt, "dc24_temp",
-                           "DC output temperature"),
-                TempEntity(client, client.pd, "typec_out1_temp",
-                           "USB-C left temperature"),
-                TempEntity(client, client.pd, "typec_out2_temp",
-                           "USB-C right temperature"),
-                VoltageEntity(client, client.mppt, "dc_in_voltage",
-                              "DC input voltage"),
-                WattsEntity(client, client.inverter,
-                            "ac_in_power", "AC input"),
-                WattsEntity(client, client.mppt, "dc_in_power",
-                            "DC input", real=True),
-                WattsEntity(client, client.mppt,
-                            "car_consumption", "Car output + loss", real=True),
-                WattsEntity(client, client.mppt,
-                            "car_out_power", "Car output"),
+                CurrentEntity(device, device.inverter,
+                            "ac_in_current", "AC input current"),
+                CurrentEntity(device, device.inverter,
+                              "ac_out_current", "AC output current"),
+                EnergyEntity(device, device.pd, "ac_in_energy",
+                             "AC input energy"),
+                EnergyEntity(device, device.pd, "ac_out_energy",
+                             "AC output energy"),
+                EnergyEntity(device, device.pd, "car_in_energy",
+                             "Car input energy"),
+                EnergyEntity(device, device.pd, "dc_out_energy",
+                             "DC output energy"),
+                EnergyEntity(device, device.pd, "mppt_in_energy",
+                             "MPPT input energy"),
+                FanEntity(device, device.inverter, "fan_state", "Fan"),
+                FrequencyEntity(device, device.inverter,
+                                "ac_in_freq", "AC input frequency"),
+                FrequencyEntity(device, device.inverter,
+                                "ac_out_freq", "AC output frequency"),
+                RemainEntity(device, device.pd, "remain_display", "Remain"),
+                VoltageEntity(device, device.inverter,
+                              "ac_in_voltage", "AC input voltage"),
+                VoltageEntity(device, device.inverter,
+                              "ac_out_voltage", "AC output voltage"),
+                WattsEntity(device, device.pd, "in_power", "Total input"),
+                WattsEntity(device, device.pd, "out_power", "Total output"),
+                WattsEntity(device, device.inverter,
+                            "ac_consumption", "AC output + loss", real=True),
+                WattsEntity(device, device.inverter, "ac_out_power",
+                            "AC output", real=False),
             ])
-            if is_delta_mini(client.product):
+            if not is_river_mini(device.product):
                 entities.extend([
-                    WattsEntity(client, client.pd,
-                                "usbqc_out1_power", "USB-Fast output"),
-                    WattsEntity(client, client.pd,
-                                "typec_out1_power", "USB-C output"),
+                    WattsEntity(device, device.pd, "usb_out1_power",
+                                "USB-A left output"),
+                    WattsEntity(device, device.pd, "usb_out2_power",
+                                "USB-A right output"),
                 ])
-            else:
+            if is_delta(device.product):
+                entities.extend([
+                    CurrentEntity(device, device.mppt, "dc_in_current",
+                                "DC input current"),
+                    CyclesEntity(
+                        device, device.bms, "battery_cycles", "Battery cycles"),
+                    LevelEntity(device, device.pd, "battery_level",
+                                "Total battery level"),
+                    RemainEntity(device, device.ems,
+                                 "battery_remain_charge", "Remain charge"),
+                    RemainEntity(device, device.ems,
+                                 "battery_remain_discharge", "Remain discharge"),
+                    SingleLevelEntity(
+                        device, device.bms, "battery_level_f32", "Battery level"),
+                    TempEntity(device, device.inverter, "ac_out_temp",
+                               "AC temperature"),
+                    TempEntity(device, device.bms, "battery_temp",
+                               "Battery temperature"),
+                    TempEntity(device, device.mppt, "dc_in_temp",
+                               "DC input temperature"),
+                    TempEntity(device, device.mppt, "dc24_temp",
+                               "DC output temperature"),
+                    TempEntity(device, device.pd, "typec_out1_temp",
+                               "USB-C left temperature"),
+                    TempEntity(device, device.pd, "typec_out2_temp",
+                               "USB-C right temperature"),
+                    VoltageEntity(device, device.mppt, "dc_in_voltage",
+                                  "DC input voltage"),
+                    WattsEntity(device, device.inverter,
+                                "ac_in_power", "AC input"),
+                    WattsEntity(device, device.mppt, "dc_in_power",
+                                "DC input", real=True),
+                    WattsEntity(device, device.mppt,
+                                "car_consumption", "Car output + loss", real=True),
+                    WattsEntity(device, device.mppt,
+                                "car_out_power", "Car output"),
+                ])
+                if is_delta_mini(device.product):
+                    entities.extend([
+                        WattsEntity(device, device.pd,
+                                    "usbqc_out1_power", "USB-Fast output"),
+                        WattsEntity(device, device.pd,
+                                    "typec_out1_power", "USB-C output"),
+                    ])
+                else:
+                    entities.extend([
+                        WattsEntity(device, device.pd, "usbqc_out1_power",
+                                    "USB-Fast left output"),
+                        WattsEntity(device, device.pd, "usbqc_out2_power",
+                                    "USB-Fast right output"),
+                        WattsEntity(device, device.pd, "typec_out1_power",
+                                    "USB-C left output"),
+                        WattsEntity(device, device.pd, "typec_out2_power",
+                                    "USB-C right output"),
+                    ])
+                if is_delta_pro(device.product):
+                    entities.extend([
+                        WattsEntity(device, device.mppt,
+                                    "anderson_out_power", "Anderson output"),
+                    ])
+            if is_river(device.product):
+                entities.extend([
+                    CurrentEntity(device, device.inverter, "dc_in_current",
+                                "DC input current"),
+                    CyclesEntity(device, device.ems, "battery_cycles",
+                                 "Battery cycles"),
+                    LevelEntity(device, device.pd, "battery_level",
+                                "Total battery level"),
+                    SingleLevelEntity(device, device.ems, "battery_main_level",
+                                      "Battery level"),
+                    TempEntity(device, device.inverter, "ac_in_temp",
+                               "AC input temperature"),
+                    TempEntity(device, device.inverter, "ac_out_temp",
+                               "AC output temperature"),
+                    TempEntity(device, device.ems, "battery_main_temp",
+                               "Battery temperature"),
+                    TempEntity(device, device.pd, "car_out_temp",
+                               "DC output temperature"),
+                    TempEntity(device, device.pd, "typec_out1_temp",
+                               "USB-C temperature"),
+                    VoltageEntity(device, device.inverter, "dc_in_voltage",
+                                  "DC input voltage"),
+                    WattsEntity(device, device.pd,
+                                "car_out_power", "Car output"),
+                    WattsEntity(device, device.pd,
+                                "light_power", "Light output"),
+                    WattsEntity(device, device.pd, "usbqc_out1_power",
+                                "USB-Fast output"),
+                    WattsEntity(device, device.pd, "typec_out1_power",
+                                "USB-C output"),
+                ])
+            if is_river_mini(device.product):
+                entities.extend([
+                        CurrentEntity(device, device.inverter, "dc_in_current",
+                                    "DC input current"),
+                        CyclesEntity(device, device.inverter, "battery_cycles",
+                                 "Battery cycles"),
+                        LevelEntity(device, device.pd, "battery_level",
+                                    "Total battery level"),
+                        TempEntity(device, device.inverter, "ac_in_temp",
+                                   "AC input temperature"),
+                        TempEntity(device, device.inverter, "ac_out_temp",
+                                   "AC output temperature"),
+                        TempEntity(device, device.inverter, "battery_main_temp",
+                                   "Battery temperature"),
+                        TempEntity(device, device.pd, "car_out_temp",
+                                   "Car output temperature"),
+                        VoltageEntity(device, device.inverter, "dc_in_voltage",
+                                      "Car input voltage"),
+                        WattsEntity(device, device.pd, "usb_out1_power",
+                                "USB-A output"),
+                        WattsEntity(device, device.pd,
+                                    "car_out_power", "Car output"),
+                        VoltageEntity(device, device.inverter, "battery_main_voltage",
+                                    "Battery voltage"),
+                    ])
+        elif type(device) is EcoFlowExtraDevice:
+            if is_delta(device.product):
                 entities.extend([
                     CyclesEntity(
-                        client, bms[1], "battery_cycles", "Extra1 battery cycles", 1),
-                    CyclesEntity(
-                        client, bms[2], "battery_cycles", "Extra2 battery cycles", 2),
+                        device, device.bms, "battery_cycles", "Battery cycles"),
                     SingleLevelEntity(
-                        client, bms[1], "battery_level_f32", "Extra1 battery", 1),
-                    SingleLevelEntity(
-                        client, bms[2], "battery_level_f32", "Extra2 battery", 2),
-                    TempEntity(client, bms[1], "battery_temp",
-                               "Extra1 battery temperature", 1),
-                    TempEntity(client, bms[2], "battery_temp",
-                               "Extra2 battery temperature", 2),
-                    WattsEntity(client, client.pd, "usbqc_out1_power",
-                                "USB-Fast left output"),
-                    WattsEntity(client, client.pd, "usbqc_out2_power",
-                                "USB-Fast right output"),
-                    WattsEntity(client, client.pd, "typec_out1_power",
-                                "USB-C left output"),
-                    WattsEntity(client, client.pd, "typec_out2_power",
-                                "USB-C right output"),
+                        device, device.bms, "battery_level_f32", "Battery level"),
+                    TempEntity(device, device.bms, "battery_temp",
+                               "Battery temperature"),
                 ])
-            if is_delta_pro(client.product):
+            elif is_river(device.product):
                 entities.extend([
-                    WattsEntity(client, client.mppt,
-                                "anderson_out_power", "Anderson output"),
+                    CyclesEntity(device, device.bms, "battery_cycles",
+                                "Battery cycles"),
+                    SingleLevelEntity(
+                        device, device.bms, "battery_level", "Battery level"),
+                    TempEntity(device, device.bms, "battery_temp",
+                               "Battery temperature"),
                 ])
-        if is_river(client.product):
-            extra = client.bms.pipe(select_bms(1), ops.share())
-            entities.extend([
-                CurrentEntity(client, client.inverter, "dc_in_current",
-                              "DC input current"),
-                CyclesEntity(client, client.ems, "battery_cycles",
-                             "Main battery cycles"),
-                CyclesEntity(client, extra, "battery_cycles",
-                             "Extra battery cycles", 1),
-                SingleLevelEntity(client, client.ems, "battery_main_level",
-                            "Main battery"),
-                SingleLevelEntity(
-                    client, extra, "battery_level", "Extra battery", 1),
-                TempEntity(client, client.inverter, "ac_in_temp",
-                           "AC input temperature"),
-                TempEntity(client, client.inverter, "ac_out_temp",
-                           "AC output temperature"),
-                TempEntity(client, client.ems, "battery_main_temp",
-                           "Main battery temperature"),
-                TempEntity(client, extra, "battery_temp",
-                           "Extra battery temperature", 1),
-                TempEntity(client, client.pd, "car_out_temp",
-                           "DC output temperature"),
-                TempEntity(client, client.pd, "typec_out1_temp",
-                           "USB-C temperature"),
-                VoltageEntity(client, client.inverter, "dc_in_voltage",
-                              "DC input voltage"),
-                WattsEntity(client, client.pd, "car_out_power", "Car output"),
-                WattsEntity(client, client.pd, "light_power", "Light output"),
-                WattsEntity(client, client.pd, "usbqc_out1_power",
-                            "USB-Fast output"),
-                WattsEntity(client, client.pd, "typec_out1_power",
-                            "USB-C output"),
-            ])
+        async_add_entities(entities)
 
-    async_add_entities(entities)
+    entry.async_on_unload(data.device_added.subscribe(device_added).dispose)
+    for device in data.devices.values():
+        device_added(device)
 
 
 class BaseEntity(SensorEntity, EcoFlowEntity):
@@ -197,19 +233,6 @@ class EnergyEntity(BaseEntity):
     _attr_state_class = SensorStateClass.TOTAL_INCREASING
 
 
-class EnergySumEntity(EnergyEntity):
-    def __init__(self, client: HassioEcoFlowClient, key: str, keys: list[str], name: str):
-        super().__init__(client, client.pd, key, name)
-        self._suffix_len = len(key) + 1
-        self._keys = [f"{x}_{key}" for x in keys]
-
-    def _on_updated(self, data: dict[str, Any]):
-        values = {key[:-self._suffix_len]: data[key]
-                  for key in data if key in self._keys}
-        self._attr_extra_state_attributes = values
-        self._attr_native_value = sum(values.values())
-
-
 class FanEntity(BaseEntity):
     _attr_state_class = SensorStateClass.MEASUREMENT
 
@@ -233,8 +256,8 @@ class LevelEntity(BaseEntity):
     _attr_native_unit_of_measurement = PERCENTAGE
     _attr_state_class = SensorStateClass.MEASUREMENT
 
-    def __init__(self, client: HassioEcoFlowClient, src: Observable[dict[str, Any]], key: str, name: str, bms_id: Optional[int] = None):
-        super().__init__(client, src, key, name, bms_id)
+    def __init__(self, device: EcoFlowDevice, src: Observable[dict[str, Any]], key: str, name: str):
+        super().__init__(device, src, key, name)
         self._attr_extra_state_attributes = {}
 
 
@@ -280,8 +303,8 @@ class WattsEntity(BaseEntity):
     _attr_native_unit_of_measurement = POWER_WATT
     _attr_state_class = SensorStateClass.MEASUREMENT
 
-    def __init__(self, client: HassioEcoFlowClient, src: Observable[dict[str, Any]], key: str, name: str, real: Union[bool, int] = False):
-        super().__init__(client, src, key, name)
+    def __init__(self, device: EcoFlowDevice, src: Observable[dict[str, Any]], key: str, name: str, real: bool | int = False):
+        super().__init__(device, src, key, name)
         if key.endswith("_consumption"):
             self._key = key[:-11] + "out_power"
             self._attr_entity_category = EntityCategory.DIAGNOSTIC

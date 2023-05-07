@@ -7,12 +7,13 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity import EntityCategory
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
-from . import (DOMAIN, EcoFlowConfigEntity, EcoFlowEntity, HassioEcoFlowClient,
-               request)
-from .ecoflow import is_delta, is_power_station, is_river, send
+from . import (DOMAIN, EcoFlowConfigEntity, EcoFlowData, EcoFlowDevice,
+               EcoFlowEntity, EcoFlowMainDevice)
+from .ecoflow import is_delta, is_river, is_river_mini, send
 
 _AC_OPTIONS = {
     "Never": 0,
+    "30min": 30,
     "2hour": 120,
     "4hour": 240,
     "6hour": 360,
@@ -57,30 +58,39 @@ _STANDBY_OPTIONS = {
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_entities: AddEntitiesCallback):
-    client: HassioEcoFlowClient = hass.data[DOMAIN][entry.entry_id]
-    entities = []
+    data: EcoFlowData = hass.data[DOMAIN]
 
-    if is_power_station(client.product):
-        entities.extend([
-            AcTimeoutEntity(client, client.inverter,
+    def device_added(device: EcoFlowDevice):
+        if type(device) is not EcoFlowMainDevice:
+            return
+        entities = [
+            AcTimeoutEntity(device, device.inverter,
                             "ac_out_timeout", "AC timeout"),
-            FreqEntity(client, client.inverter,
+            FreqEntity(device, device.inverter,
                        "ac_out_freq_config", "AC frequency"),
             StandbyTimeoutEntity(
-                client, client.pd, "standby_timeout", "Unit timeout"),
-        ])
-        if is_delta(client.product):
+                device, device.pd, "standby_timeout", "Unit timeout"),
+        ]
+        if is_delta(device.product):
             entities.extend([
-                LcdTimeoutPushEntity(client, client.pd,
+                LcdTimeoutPushEntity(device, device.pd,
                                      "lcd_timeout", "Screen timeout"),
             ])
-        if is_river(client.product):
+        if is_river(device.product):
             entities.extend([
-                DcInTypeEntity(client),
-                LcdTimeoutPollEntity(client, "lcd_timeout", "Screen timeout"),
+                DcInTypeEntity(device),
+                LcdTimeoutPollEntity(device, "lcd_timeout", "Screen timeout"),
             ])
+        if is_river_mini(device.product):
+            entities.extend([
+                LcdTimeoutPushEntity(device, device.pd,
+                                     "lcd_timeout", "Screen timeout"),
+            ])
+        async_add_entities(entities)
 
-    async_add_entities(entities)
+    entry.async_on_unload(data.device_added.subscribe(device_added).dispose)
+    for device in data.devices.values():
+        device_added(device)
 
 
 class AcTimeoutEntity(SelectEntity, EcoFlowEntity):
@@ -90,7 +100,7 @@ class AcTimeoutEntity(SelectEntity, EcoFlowEntity):
     _attr_options = list(_AC_OPTIONS.keys())
 
     async def async_select_option(self, option: str):
-        self._client.tcp.write(send.set_ac_timeout(_AC_OPTIONS[option]))
+        self._device.send(send.set_ac_timeout(_AC_OPTIONS[option]))
 
     def _on_updated(self, data: dict[str, Any]):
         value = data[self._key]
@@ -102,24 +112,24 @@ class DcInTypeEntity(SelectEntity, EcoFlowConfigEntity):
     _attr_current_option = None
     _attr_options = list(_DC_IMPUTS.keys())
 
-    def __init__(self, client: HassioEcoFlowClient):
-        super().__init__(client, "dc_in_type_config", "DC mode")
-        self._req = send.get_dc_in_type(client.product)
+    def __init__(self, device: EcoFlowMainDevice):
+        super().__init__(device, "dc_in_type_config", "DC mode")
+        self._req = send.get_dc_in_type(device.product)
 
     @property
     def icon(self):
         return _DC_ICONS.get(self.current_option, None)
 
     async def async_select_option(self, option: str):
-        self._client.tcp.write(send.set_dc_in_type(
-            self._client.product, _DC_IMPUTS[option]))
+        self._device.send(send.set_dc_in_type(
+            self._device.product, _DC_IMPUTS[option]))
 
     async def async_update(self):
         try:
-            value = await request(self._client.tcp, self._req, self._client.dc_in_type)
+            value = await self._device.request(self._req, self._device.dc_in_type)
         except:
             return
-        self._client.diagnostics["dc_in_type"] = value
+        self._device.diagnostics["dc_in_type"] = value
         self._attr_current_option = next(
             (i for i in _DC_IMPUTS if _DC_IMPUTS[i] == value), None)
         self._attr_available = True
@@ -133,8 +143,8 @@ class FreqEntity(SelectEntity, EcoFlowEntity):
     _attr_unit_of_measurement = FREQUENCY_HERTZ
 
     async def async_select_option(self, option: str):
-        self._client.tcp.write(send.set_ac_out(
-            self._client.product, freq=_FREQS[option]))
+        self._device.send(send.set_ac_out(
+            self._device.product, freq=_FREQS[option]))
 
     def _on_updated(self, data: dict[str, Any]):
         value = data[self._key]
@@ -150,15 +160,15 @@ class LcdTimeoutPollEntity(SelectEntity, EcoFlowConfigEntity):
     _req = send.get_lcd()
 
     async def async_select_option(self, option: str):
-        self._client.tcp.write(send.set_lcd(
-            self._client.product, time=_LCD_OPTIONS[option]))
+        self._device.send(send.set_lcd(
+            self._device.product, time=_LCD_OPTIONS[option]))
 
     async def async_update(self):
         try:
-            value = await request(self._client.tcp, self._req, self._client.lcd_timeout)
+            value = await self._device.request(self._req, self._device.lcd_timeout)
         except:
             return
-        self._client.diagnostics["lcd_timeout"] = value
+        self._device.diagnostics["lcd_timeout"] = value
         self._attr_current_option = next(
             (i for i in _LCD_OPTIONS if _LCD_OPTIONS[i] == value), None)
         self._attr_available = True
@@ -171,8 +181,8 @@ class LcdTimeoutPushEntity(SelectEntity, EcoFlowEntity):
     _attr_options = list(_LCD_OPTIONS.keys())
 
     async def async_select_option(self, option: str):
-        self._client.tcp.write(send.set_lcd(
-            self._client.product, time=_LCD_OPTIONS[option]))
+        self._device.send(send.set_lcd(
+            self._device.product, time=_LCD_OPTIONS[option]))
 
     def _on_updated(self, data: dict[str, Any]):
         value = data[self._key]
@@ -187,7 +197,7 @@ class StandbyTimeoutEntity(SelectEntity, EcoFlowEntity):
     _attr_options = list(_STANDBY_OPTIONS.keys())
 
     async def async_select_option(self, option: str):
-        self._client.tcp.write(
+        self._device.send(
             send.set_standby_timeout(_STANDBY_OPTIONS[option]))
 
     def _on_updated(self, data: dict[str, Any]):
