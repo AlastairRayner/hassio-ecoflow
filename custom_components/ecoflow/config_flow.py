@@ -59,18 +59,18 @@ class EcoflowConfigFlow(ConfigFlow, domain=DOMAIN):
             else:
                 serial = info["serial"]
                 entry = await self.async_set_unique_id(DOMAIN, raise_on_progress=False)
-                if entry and serial in entry.data:
-                    data = dict(entry.data[serial])
-                else:
-                    data = {}
-                data.update({
+
+                data = dict(entry.data) if entry else {}
+
+                data[serial] = {
                     CONF_HOST: self.host,
                     CONF_PRODUCT: info["product"],
-                })
-                if self.mac:
-                    data[CONF_MAC] = self.mac
+                }
 
-                self._abort_if_unique_id_configured({serial: data}, False)
+                if self.mac:
+                    data[serial][CONF_MAC] = self.mac
+
+                self._abort_if_unique_id_configured(data, False)
                 return self.async_create_entry(
                     title="",
                     data=data,
